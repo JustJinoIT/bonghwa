@@ -1,0 +1,18 @@
+#!/bin/bash
+# PROTOTYPE — 봉화(Bonghwa) post-receive hook (Linux simulation)
+# 실제 Windows 버전은 hooks/post-receive 참조. 로직 동일, msbuild/iis만 mock.
+
+set -euo pipefail
+
+DEPLOY_BRANCH="master"
+BONGHWA_HOME="${BONGHWA_HOME:?BONGHWA_HOME not set}"
+
+while read oldrev newrev refname; do
+    branch=$(basename "$refname")
+    if [ "$branch" != "$DEPLOY_BRANCH" ]; then
+        echo "[bonghwa] branch '$branch' ignored (deploy branch: $DEPLOY_BRANCH)"
+        continue
+    fi
+    echo "[bonghwa] push detected: $branch ${newrev:0:8}"
+    bash "$BONGHWA_HOME/sim/deploy.sh" "$newrev"
+done
