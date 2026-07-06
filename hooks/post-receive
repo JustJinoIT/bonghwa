@@ -1,0 +1,21 @@
+#!/bin/sh
+# 봉화(Bonghwa) — post-receive hook (Windows Gitea)
+# Gitea는 Git for Windows의 sh.exe로 훅을 실행한다. 여기서 PowerShell로 넘긴다.
+# 설치: 이 파일을 <repo>.git/hooks/post-receive 로 복사 (Gitea custom hook 화면에서도 가능)
+
+DEPLOY_BRANCH="master"
+# 경로는 환경변수 또는 아래 한 곳에서만 수정 (하드코딩 분산 금지)
+BONGHWA_HOME="${BONGHWA_HOME:-C:/bonghwa}"
+
+while read oldrev newrev refname; do
+    branch=$(basename "$refname")
+    if [ "$branch" != "$DEPLOY_BRANCH" ]; then
+        echo "[bonghwa] branch '$branch' ignored"
+        continue
+    fi
+    echo "[bonghwa] push detected: $branch $newrev"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass \
+        -File "$BONGHWA_HOME/scripts/deploy.ps1" \
+        -Commit "$newrev" \
+        -RepoPath "$GIT_DIR"
+done
