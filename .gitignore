@@ -1,0 +1,11 @@
+sim-env/
+*.log
+.env
+.env.*
+*.secret
+*.key
+*.pem
+*.pfx
+credentials.json
+token.json
+.DS_Store
