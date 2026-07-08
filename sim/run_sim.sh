@@ -49,11 +49,24 @@ V3=$(cat "$ENV/wwwroot/app/Program.cs" | head -1)
 echo ">>> live 내용: $V3"
 
 echo ""
-echo "=== [4] 배포 이력 ==="
+echo "=== [4] 빌드 실패 push → live 무손상 확인 ==="
+touch BUILD_FAIL
+echo "// v3 (never deployed)" > Program.cs
+git add . && git commit -m "v3 (broken build)" -q
+git push origin master 2>&1 | grep -E '^remote:' || true
+
+V4=$(cat "$ENV/wwwroot/app/Program.cs" | head -1)
+echo ">>> live 내용 (변화 없어야 함): $V4"
+FAIL_COUNT=$(grep -c '|DEPLOY_FAIL|' "$ENV/history.log" || true)
+echo ">>> DEPLOY_FAIL 이력 개수: $FAIL_COUNT"
+
+echo ""
+echo "=== [5] 배포 이력 ==="
 cat "$ENV/history.log"
 
 echo ""
 echo "=== 판정 ==="
 [ "$V1" = "// v1" ] && [ "$V2" = "// v2" ] && [ "$V3" = "// v1" ] \
-  && echo "PASS: push감지→build→deploy→이력→rollback 전체 사이클 동작" \
-  || { echo "FAIL: v1='$V1' v2='$V2' v3='$V3'"; exit 1; }
+  && [ "$V4" = "// v1" ] && [ "$FAIL_COUNT" -ge 1 ] \
+  && echo "PASS: push감지→build→deploy→이력→rollback→빌드실패(live무손상) 전체 사이클 동작" \
+  || { echo "FAIL: v1='$V1' v2='$V2' v3='$V3' v4='$V4' fail_count=$FAIL_COUNT"; exit 1; }

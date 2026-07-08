@@ -21,6 +21,11 @@ git --git-dir="$REPO_BARE" --work-tree="$WORK_DIR" checkout -f "$COMMIT" -- . 2>
   || git --git-dir="$REPO_BARE" --work-tree="$WORK_DIR" checkout -f "$COMMIT"
 
 echo "[deploy] 2/4 build (mock MSBuild)"
+if [ -f "$WORK_DIR/BUILD_FAIL" ]; then
+    echo "[deploy] BUILD FAILED (mock) — live 유지, 릴리즈 미생성" >&2
+    echo "$(date -Iseconds)|DEPLOY_FAIL|$COMMIT|build failed (BUILD_FAIL marker present)" >> "$HISTORY"
+    exit 1
+fi
 mkdir -p "$RELEASE_DIR"
 # mock: 소스의 *.cs를 "빌드 산출물"로 복사 + 빌드 마커
 cp -r "$WORK_DIR/." "$RELEASE_DIR/"
