@@ -1,4 +1,4 @@
-# 봉화(Bonghwa) — rollback.ps1
+﻿# 봉화(Bonghwa) — rollback.ps1
 # 사용: .\rollback.ps1            → 직전 릴리즈로 복귀
 #       .\rollback.ps1 -Release C:\bonghwa\releases\20260703_..._abcd1234
 param(

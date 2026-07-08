@@ -1,4 +1,4 @@
-# 봉화(Bonghwa) — deploy.ps1
+﻿# 봉화(Bonghwa) — deploy.ps1
 # post-receive hook에서 호출. checkout → MSBuild → junction 스위칭 → 이력 기록.
 param(
     [Parameter(Mandatory)] [string]$Commit,
@@ -28,11 +28,19 @@ try {
     & $C.MSBuildPath $sln /t:Rebuild /p:Configuration=$($C.BuildConfig) /v:minimal /nologo
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed (exit $LASTEXITCODE)" }
 
+    # ASP.NET Web Application의 콘텐츠(aspx/web.config 등)는 일반 Rebuild로는 bin에
+    # 복사되지 않는다 (IIS는 bin+콘텐츠가 같은 폴더에 있어야 서빙 가능).
+    # _CopyWebApplication으로 PublishOutput 한 곳에 모은다.
+    $buildOut = Join-Path $C.WorkDir $C.PublishOutput
+    if (Test-Path $buildOut) { Remove-Item $buildOut -Recurse -Force }
+    & $C.MSBuildPath $sln /t:_CopyWebApplication /p:Configuration=$($C.BuildConfig) `
+        "/p:WebProjectOutputDir=$buildOut" "/p:OutDir=$buildOut\bin\" /v:minimal /nologo
+    if ($LASTEXITCODE -ne 0) { throw "MSBuild _CopyWebApplication failed (exit $LASTEXITCODE)" }
+
     # 3. 릴리즈 폴더 생성
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $releaseDir = Join-Path $C.ReleasesDir "${stamp}_$($Commit.Substring(0,8))"
     Log "3/5 stage release → $releaseDir"
-    $buildOut = Join-Path $C.WorkDir $C.PublishOutput
     New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
     Copy-Item "$buildOut\*" $releaseDir -Recurse -Force
     "built=$Commit at=$stamp" | Set-Content (Join-Path $releaseDir "BUILD_INFO.txt")

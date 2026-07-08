@@ -1,4 +1,4 @@
-# 봉화(Bonghwa) — bonghwa.ps1
+﻿# 봉화(Bonghwa) — bonghwa.ps1
 # 단일 진입점 CLI. status/history는 조회, deploy/rollback은 기존 스크립트에 위임.
 param(
     [Parameter(Mandatory, Position = 0)]

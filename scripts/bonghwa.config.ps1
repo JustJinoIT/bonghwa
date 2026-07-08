@@ -1,4 +1,4 @@
-# 봉화(Bonghwa) 설정 — 환경별 경로는 전부 여기서만. (예시값, 실서버에서 수정)
+﻿# 봉화(Bonghwa) 설정 — 환경별 경로는 전부 여기서만. (예시값, 실서버에서 수정)
 # 비밀값(계정/토큰)은 이 파일에도 넣지 말 것 → Windows 자격증명관리자/환경변수 사용.
 # CI(GitHub Actions windows-2022, .github/workflows/verify-windows.yml)는 실서버와
 # 경로가 달라서 BONGHWA_* 환경변수로 override — 기본값은 항상 실서버 기준을 유지한다.
@@ -19,7 +19,7 @@ $BonghwaConfig = @{
     MSBuildPath   = Get-BonghwaSetting "MSBUILD_PATH" "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
     SolutionFile  = "sample-app\SampleApp.sln"   # 리포지토리 루트 기준 상대경로 — 리포에 포함된 실증용 샘플
     BuildConfig   = "Release"
-    PublishOutput = "sample-app\SampleApp\bin\Release"   # 빌드 산출물 폴더 (WorkDir 기준)
+    PublishOutput = "sample-app\SampleApp\_publish"   # 빌드 산출물 폴더 (WorkDir 기준, _CopyWebApplication 결과물)
 
     # 배포
     WorkDir       = Get-BonghwaSetting "WORK_DIR" "C:\bonghwa\work"        # checkout 작업 폴더

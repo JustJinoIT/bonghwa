@@ -1,4 +1,4 @@
-# 봉화(Bonghwa) — install.ps1
+﻿# 봉화(Bonghwa) — install.ps1
 # Windows 서버 사전점검 + 작업 디렉토리 준비 + (선택) Gitea post-receive hook 설치
 param(
     [string]$GiteaRepoPath   # 지정 시 hooks/post-receive를 <path>\hooks\post-receive 로 복사
