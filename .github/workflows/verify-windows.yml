@@ -1,0 +1,226 @@
+name: verify-windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    env:
+      BONGHWA_WORK_DIR: ${{ runner.temp }}\bonghwa\work
+      BONGHWA_RELEASES_DIR: ${{ runner.temp }}\bonghwa\releases
+      BONGHWA_HISTORY_FILE: ${{ runner.temp }}\bonghwa\history.log
+      GITEA_HOME: ${{ runner.temp }}\gitea-home
+      GITEA_VERSION: "1.26.4"
+      GITEA_URL: http://localhost:3000
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: "=== SETUP 1/4: vswhere로 MSBuild 탐색 + sample-app 스모크 빌드 ==="
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe 없음: $vswhere" }
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) { throw "vswhere로 MSBuild를 찾지 못함" }
+          Write-Host "MSBuild 탐색 결과: $msbuild"
+          Add-Content -Path $env:GITHUB_ENV -Value "BONGHWA_MSBUILD_PATH=$msbuild"
+
+          Write-Host "--- sample-app 스모크 빌드 (deploy.ps1과 무관하게 MSBuild 자체 검증) ---"
+          & $msbuild "sample-app\SampleApp.sln" /t:Rebuild /p:Configuration=Release /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { throw "sample-app 스모크 빌드 실패 (exit $LASTEXITCODE)" }
+          Write-Host "스모크 빌드 OK"
+
+      - name: "=== SETUP 2/4: bonghwa.config.ps1이 CI 경로로 해석되는지 확인 ==="
+        shell: pwsh
+        run: |
+          . .\scripts\bonghwa.config.ps1
+          $C = $BonghwaConfig
+          Write-Host ($C | ConvertTo-Json)
+          if ($C.MSBuildPath -ne $env:BONGHWA_MSBUILD_PATH) { throw "config가 CI MSBuild 경로를 못 읽음" }
+          if ($C.SolutionFile -ne "sample-app\SampleApp.sln") { throw "config SolutionFile 불일치" }
+
+      - name: "=== SETUP 3/4: IIS + ASP.NET 4.8 활성화 (러너 관리자 권한) ==="
+        shell: pwsh
+        run: |
+          Install-WindowsFeature -Name Web-Server, Web-Asp-Net45, Web-Net-Ext45, Web-ISAPI-Ext, Web-ISAPI-Filter -IncludeManagementTools
+          Start-Service W3SVC -ErrorAction SilentlyContinue
+          Get-Service W3SVC | Format-List Name, Status
+
+      - name: "=== SETUP 4/4: Gitea portable 다운로드 + 초기화 + bonghwa-test repo 생성 + hook 설치 ==="
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:GITEA_HOME -Force | Out-Null
+          $giteaExe = Join-Path $env:GITEA_HOME "gitea.exe"
+          $url = "https://github.com/go-gitea/gitea/releases/download/v$env:GITEA_VERSION/gitea-$env:GITEA_VERSION-windows-4.0-amd64.exe"
+          Write-Host "Gitea 다운로드: $url"
+          Invoke-WebRequest -Uri $url -OutFile $giteaExe
+
+          $repoRoot = Join-Path $env:GITEA_HOME "gitea-repositories"
+          $appIni = Join-Path $env:GITEA_HOME "app.ini"
+          $iniLines = @(
+            "APP_NAME = bonghwa-ci",
+            "RUN_MODE = prod",
+            "",
+            "[server]",
+            "HTTP_ADDR = 127.0.0.1",
+            "HTTP_PORT = 3000",
+            "ROOT_URL = http://localhost:3000/",
+            "DISABLE_SSH = true",
+            "START_SSH_SERVER = false",
+            "",
+            "[database]",
+            "DB_TYPE = sqlite3",
+            "PATH = $($env:GITEA_HOME)\gitea.db",
+            "",
+            "[repository]",
+            "ROOT = $repoRoot",
+            "",
+            "[security]",
+            "INSTALL_LOCK = true",
+            "",
+            "[service]",
+            "DISABLE_REGISTRATION = true",
+            "",
+            "[log]",
+            "MODE = console",
+            "LEVEL = info"
+          )
+          Set-Content -Path $appIni -Value $iniLines -Encoding UTF8
+
+          $env:GITEA_WORK_DIR = $env:GITEA_HOME
+          Start-Process -FilePath $giteaExe -ArgumentList "web", "--config", $appIni `
+            -RedirectStandardOutput (Join-Path $env:GITEA_HOME "gitea.out.log") `
+            -RedirectStandardError (Join-Path $env:GITEA_HOME "gitea.err.log")
+
+          Write-Host "Gitea 기동 대기..."
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri "$env:GITEA_URL/api/healthz" -UseBasicParsing -TimeoutSec 3
+              if ($r.StatusCode -eq 200) { $ready = $true; break }
+            } catch { }
+          }
+          if (-not $ready) {
+            Get-Content (Join-Path $env:GITEA_HOME "gitea.err.log") -ErrorAction SilentlyContinue
+            throw "Gitea가 기동하지 않음"
+          }
+          Write-Host "Gitea 기동 완료"
+
+          $pw = [System.Guid]::NewGuid().ToString("N")
+          Write-Host "::add-mask::$pw"
+          & $giteaExe admin user create --config $appIni --username bonghwa --password $pw --email bonghwa@example.local --admin --must-change-password=false
+          if ($LASTEXITCODE -ne 0) { throw "gitea admin user create 실패" }
+
+          $pair = "bonghwa:$pw"
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+          $headers = @{ Authorization = "Basic $basic" }
+          $body = @{ name = "bonghwa-test"; private = $true; auto_init = $false } | ConvertTo-Json
+          Invoke-RestMethod -Uri "$env:GITEA_URL/api/v1/user/repos" -Method Post -Headers $headers -ContentType "application/json" -Body $body | Out-Null
+          Write-Host "bonghwa-test repo 생성 완료"
+
+          $bareRepoPath = Join-Path $repoRoot "bonghwa\bonghwa-test.git"
+          Add-Content -Path $env:GITHUB_ENV -Value "BONGHWA_TEST_REPO_PATH=$bareRepoPath"
+          Add-Content -Path $env:GITHUB_ENV -Value "GITEA_PUSH_URL=http://bonghwa:$pw@localhost:3000/bonghwa/bonghwa-test.git"
+
+          Write-Host "--- install.ps1 실행 (사전점검 + hook 설치, 실제 검증) ---"
+          .\scripts\install.ps1 -GiteaRepoPath $bareRepoPath
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 사전점검 실패" }
+          Get-Content (Join-Path $bareRepoPath "hooks\post-receive")
+
+      - name: "=== VERIFY 1/4: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
+        shell: pwsh
+        run: |
+          $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
+          git clone $env:GITHUB_WORKSPACE $devClone
+          cd $devClone
+          git remote remove origin
+          git remote add gitea $env:GITEA_PUSH_URL
+          git config user.email "dev@bonghwa-ci.local"
+          git config user.name "bonghwa-ci"
+          git push gitea HEAD:master
+
+          $ok = $false
+          for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
+              if ($r.Content -match "v1") { $ok = $true; break }
+            } catch { Write-Host "재시도: $_" }
+          }
+          if (-not $ok) { throw "v1 배포 확인 실패" }
+          Write-Host "v1 배포 확인 OK"
+
+      - name: "=== VERIFY 2/4: v2 재push → 갱신 확인 ==="
+        shell: pwsh
+        run: |
+          $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
+          cd $devClone
+          (Get-Content "sample-app\SampleApp\Default.aspx.cs") -replace 'Response.Write\("v1"\)', 'Response.Write("v2")' | Set-Content "sample-app\SampleApp\Default.aspx.cs"
+          git add .
+          git commit -m "v2" -q
+          git push gitea HEAD:master
+
+          $ok = $false
+          for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
+              if ($r.Content -match "v2") { $ok = $true; break }
+            } catch { Write-Host "재시도: $_" }
+          }
+          if (-not $ok) { throw "v2 배포 확인 실패" }
+          Write-Host "v2 배포 확인 OK"
+
+      - name: "=== VERIFY 3/4: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
+        shell: pwsh
+        run: |
+          $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
+          cd $devClone
+          Add-Content "sample-app\SampleApp\Default.aspx.cs" "this is not valid C# ("
+          git add .
+          git commit -m "v3 (broken build)" -q
+          git push gitea HEAD:master
+
+          Start-Sleep -Seconds 5
+          $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
+          if ($r.Content -notmatch "v2") { throw "빌드 실패 후 live가 v2로 유지되지 않음" }
+          Write-Host "live 무손상 확인 OK (여전히 v2)"
+
+          $history = Get-Content $env:BONGHWA_HISTORY_FILE
+          if (-not ($history | Select-String "DEPLOY_FAIL")) { throw "DEPLOY_FAIL 이력 없음" }
+          Write-Host "DEPLOY_FAIL 이력 확인 OK"
+          $history | Select-Object -Last 5
+
+      - name: "=== VERIFY 4/4: bonghwa.ps1 rollback/status/history ==="
+        shell: pwsh
+        run: |
+          .\scripts\bonghwa.ps1 rollback
+          if ($LASTEXITCODE -ne 0) { throw "rollback 실행 실패" }
+
+          $ok = $false
+          for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
+              if ($r.Content -match "v1") { $ok = $true; break }
+            } catch { Write-Host "재시도: $_" }
+          }
+          if (-not $ok) { throw "rollback 후 v1 확인 실패" }
+          Write-Host "rollback 후 v1 확인 OK"
+
+          Write-Host "--- bonghwa.ps1 status ---"
+          .\scripts\bonghwa.ps1 status
+          Write-Host "--- bonghwa.ps1 history ---"
+          .\scripts\bonghwa.ps1 history
+
+      - name: "=== 판정: push→build→deploy→실패경로→rollback 전체 사이클 ==="
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "실행 순서: v1 배포 -> v2 배포 -> 빌드실패(live 무손상) -> rollback(v1 복귀)"
+          Write-Host "위 VERIFY 1~4 스텝이 전부 성공했다면 PASS. 하나라도 실패했으면 이 job은 이미 실패 상태입니다."
