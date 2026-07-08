@@ -5,7 +5,12 @@
 
 function Get-BonghwaSetting {
     param([string]$Name, [string]$Default)
-    $v = [Environment]::GetEnvironmentVariable("BONGHWA_$Name")
+    $key = "BONGHWA_$Name"
+    # 프로세스 스코프 우선, 없으면 Machine 스코프도 확인한다.
+    # Gitea(예약 작업으로 기동)가 스폰하는 hook -> deploy.ps1 프로세스는
+    # Actions 스텝의 $env:GITHUB_ENV를 상속받지 못해서 Machine 스코프가 필요하다.
+    $v = [Environment]::GetEnvironmentVariable($key)
+    if (-not $v) { $v = [Environment]::GetEnvironmentVariable($key, "Machine") }
     if ($v) { return $v } else { return $Default }
 }
 
