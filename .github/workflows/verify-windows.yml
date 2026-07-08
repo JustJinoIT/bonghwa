@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # shallow clone은 Gitea push가 거부함 (shallow update not allowed)
 
       - name: "=== SETUP 0/4: runner.temp 기반 경로 고정 ==="
         shell: pwsh
