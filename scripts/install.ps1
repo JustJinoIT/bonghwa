@@ -79,8 +79,15 @@ if ($GiteaRepoPath) {
     $hooksDir = Join-Path $GiteaRepoPath "hooks"
     if (-not (Test-Path $hooksDir)) { New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null }
     $src = Join-Path $PSScriptRoot "..\hooks\post-receive"
-    Copy-Item $src (Join-Path $hooksDir "post-receive") -Force
-    Write-Host "  복사 완료: $(Join-Path $hooksDir 'post-receive')"
+
+    # 훅의 BONGHWA_HOME 기본값(C:/bonghwa)을 install.ps1이 실제로 실행된 위치로
+    # 치환한다. 하드코딩된 기본값은 이 스크립트가 설치되는 서버마다 다를 수 있어
+    # 실제로 안 맞는 경우(예: CI 러너)가 있었다 — 설치 시점에 자동으로 맞춘다.
+    $bonghwaHome = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path -replace '\\', '/'
+    $hookContent = Get-Content $src -Raw
+    $hookContent = $hookContent.Replace('${BONGHWA_HOME:-C:/bonghwa}', "`${BONGHWA_HOME:-$bonghwaHome}")
+    [System.IO.File]::WriteAllText((Join-Path $hooksDir "post-receive"), $hookContent)
+    Write-Host "  복사 완료: $(Join-Path $hooksDir 'post-receive') (BONGHWA_HOME=$bonghwaHome)"
 }
 
 Write-Host ""
