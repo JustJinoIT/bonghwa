@@ -8,14 +8,19 @@ DEPLOY_BRANCH="master"
 BONGHWA_HOME="${BONGHWA_HOME:-C:/bonghwa}"
 
 while read oldrev newrev refname; do
+    # CRLF 등 개행 오염 방어 (Windows sh.exe 경유 시 섞일 수 있음)
+    newrev=$(printf '%s' "$newrev" | tr -d '\r\n')
+    refname=$(printf '%s' "$refname" | tr -d '\r\n')
+    repo_dir=$(printf '%s' "$GIT_DIR" | tr -d '\r\n')
     branch=$(basename "$refname")
     if [ "$branch" != "$DEPLOY_BRANCH" ]; then
         echo "[bonghwa] branch '$branch' ignored"
         continue
     fi
     echo "[bonghwa] push detected: $branch $newrev"
+    echo "[bonghwa] debug: commit=[$newrev] repo_dir=[$repo_dir] bonghwa_home=[$BONGHWA_HOME]"
     powershell.exe -NoProfile -ExecutionPolicy Bypass \
         -File "$BONGHWA_HOME/scripts/deploy.ps1" \
         -Commit "$newrev" \
-        -RepoPath "$GIT_DIR"
+        -RepoPath "$repo_dir"
 done
