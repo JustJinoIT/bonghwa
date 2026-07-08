@@ -9,15 +9,20 @@ jobs:
   verify:
     runs-on: windows-2022
     env:
-      BONGHWA_WORK_DIR: ${{ runner.temp }}\bonghwa\work
-      BONGHWA_RELEASES_DIR: ${{ runner.temp }}\bonghwa\releases
-      BONGHWA_HISTORY_FILE: ${{ runner.temp }}\bonghwa\history.log
-      GITEA_HOME: ${{ runner.temp }}\gitea-home
       GITEA_VERSION: "1.26.4"
       GITEA_URL: http://localhost:3000
     steps:
       - name: checkout
         uses: actions/checkout@v4
+
+      - name: "=== SETUP 0/4: runner.temp 기반 경로 고정 ==="
+        shell: pwsh
+        run: |
+          $base = "${{ runner.temp }}\bonghwa"
+          Add-Content -Path $env:GITHUB_ENV -Value "BONGHWA_WORK_DIR=$base\work"
+          Add-Content -Path $env:GITHUB_ENV -Value "BONGHWA_RELEASES_DIR=$base\releases"
+          Add-Content -Path $env:GITHUB_ENV -Value "BONGHWA_HISTORY_FILE=$base\history.log"
+          Add-Content -Path $env:GITHUB_ENV -Value "GITEA_HOME=${{ runner.temp }}\gitea-home"
 
       - name: "=== SETUP 1/4: vswhere로 MSBuild 탐색 + sample-app 스모크 빌드 ==="
         shell: pwsh
