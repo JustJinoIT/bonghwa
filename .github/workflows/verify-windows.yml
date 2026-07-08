@@ -96,10 +96,14 @@ jobs:
           )
           Set-Content -Path $appIni -Value $iniLines -Encoding UTF8
 
-          $env:GITEA_WORK_DIR = $env:GITEA_HOME
-          Start-Process -FilePath $giteaExe -ArgumentList "web", "--config", $appIni `
-            -RedirectStandardOutput (Join-Path $env:GITEA_HOME "gitea.out.log") `
-            -RedirectStandardError (Join-Path $env:GITEA_HOME "gitea.err.log")
+          # Start-Process로 띄우면 이 스텝(Job Object) 종료 시 같이 죽는다.
+          # 예약 작업으로 등록해 스텝 경계와 무관하게 살아있게 한다.
+          $wrapper = Join-Path $env:GITEA_HOME "run-gitea.cmd"
+          Set-Content -Path $wrapper -Value "@echo off`r`n`"$giteaExe`" web --config `"$appIni`" --work-path `"$($env:GITEA_HOME)`" > `"$($env:GITEA_HOME)\gitea.out.log`" 2>> `"$($env:GITEA_HOME)\gitea.err.log`""
+          $action = New-ScheduledTaskAction -Execute $wrapper
+          $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1)
+          Register-ScheduledTask -TaskName "BonghwaGitea" -Action $action -Trigger $trigger -RunLevel Highest -Force | Out-Null
+          Start-ScheduledTask -TaskName "BonghwaGitea"
 
           Write-Host "Gitea 기동 대기..."
           $ready = $false
@@ -118,7 +122,7 @@ jobs:
 
           $pw = [System.Guid]::NewGuid().ToString("N")
           Write-Host "::add-mask::$pw"
-          & $giteaExe admin user create --config $appIni --username bonghwa --password $pw --email bonghwa@example.local --admin --must-change-password=false
+          & $giteaExe admin user create --config $appIni --work-path $env:GITEA_HOME --username bonghwa --password $pw --email bonghwa@example.local --admin --must-change-password=false
           if ($LASTEXITCODE -ne 0) { throw "gitea admin user create 실패" }
 
           $pair = "bonghwa:$pw"
