@@ -28,21 +28,16 @@ try {
     & $C.MSBuildPath $sln /t:Rebuild /p:Configuration=$($C.BuildConfig) /v:minimal /nologo
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed (exit $LASTEXITCODE)" }
 
-    # ASP.NET Web Application의 콘텐츠(aspx/web.config 등)는 일반 Rebuild로는 bin에
-    # 복사되지 않는다 (IIS는 bin+콘텐츠가 같은 폴더에 있어야 서빙 가능).
-    # _CopyWebApplication으로 PublishOutput 한 곳에 모은다.
-    $buildOut = Join-Path $C.WorkDir $C.PublishOutput
-    if (Test-Path $buildOut) { Remove-Item $buildOut -Recurse -Force }
-    & $C.MSBuildPath $sln /t:_CopyWebApplication /p:Configuration=$($C.BuildConfig) `
-        "/p:WebProjectOutputDir=$buildOut" "/p:OutDir=$buildOut\bin\" /v:minimal /nologo
-    if ($LASTEXITCODE -ne 0) { throw "MSBuild _CopyWebApplication failed (exit $LASTEXITCODE)" }
-
     # 3. 릴리즈 폴더 생성
+    # ASP.NET Web Application은 bin(컴파일 산출물)과 콘텐츠(aspx/web.config 등)가
+    # 같은 폴더에 있어야 IIS가 서빙한다 — MSBuild _CopyWebApplication 타깃은 이 조합이
+    # 기대대로 안 맞아 프로젝트 폴더를 obj만 빼고 그대로 복사하는 방식으로 대체.
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $releaseDir = Join-Path $C.ReleasesDir "${stamp}_$($Commit.Substring(0,8))"
     Log "3/5 stage release → $releaseDir"
+    $projectDir = Join-Path $C.WorkDir $C.PublishOutput
     New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
-    Copy-Item "$buildOut\*" $releaseDir -Recurse -Force
+    Get-ChildItem $projectDir -Exclude obj | Copy-Item -Destination $releaseDir -Recurse -Force
     "built=$Commit at=$stamp" | Set-Content (Join-Path $releaseDir "BUILD_INFO.txt")
 
     # 4. junction 스위칭 (원자적 교체 — IIS 무중단에 가까운 전환)

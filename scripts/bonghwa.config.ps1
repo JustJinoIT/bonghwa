@@ -19,7 +19,7 @@ $BonghwaConfig = @{
     MSBuildPath   = Get-BonghwaSetting "MSBUILD_PATH" "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
     SolutionFile  = "sample-app\SampleApp.sln"   # 리포지토리 루트 기준 상대경로 — 리포에 포함된 실증용 샘플
     BuildConfig   = "Release"
-    PublishOutput = "sample-app\SampleApp\_publish"   # 빌드 산출물 폴더 (WorkDir 기준, _CopyWebApplication 결과물)
+    PublishOutput = "sample-app\SampleApp"   # 프로젝트 폴더 (WorkDir 기준) — build 후 obj 제외 전체를 릴리즈로 복사
 
     # 배포
     WorkDir       = Get-BonghwaSetting "WORK_DIR" "C:\bonghwa\work"        # checkout 작업 폴더
