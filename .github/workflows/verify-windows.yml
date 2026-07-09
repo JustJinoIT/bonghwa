@@ -168,12 +168,15 @@ jobs:
           $ok = $false
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            try {
-              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
-              if ($r.Content -match "v1") { $ok = $true; break }
-            } catch { Write-Host "재시도: $_" }
+            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+            Write-Host "재시도 $i : status=$($r.StatusCode)"
+            if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
           }
-          if (-not $ok) { throw "v1 배포 확인 실패" }
+          if (-not $ok) {
+            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            throw "v1 배포 확인 실패"
+          }
           Write-Host "v1 배포 확인 OK"
 
       - name: "=== VERIFY 2/4: v2 재push → 갱신 확인 ==="
@@ -189,12 +192,15 @@ jobs:
           $ok = $false
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            try {
-              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
-              if ($r.Content -match "v2") { $ok = $true; break }
-            } catch { Write-Host "재시도: $_" }
+            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+            Write-Host "재시도 $i : status=$($r.StatusCode)"
+            if ($r.StatusCode -eq 200 -and $r.Content -match "v2") { $ok = $true; break }
           }
-          if (-not $ok) { throw "v2 배포 확인 실패" }
+          if (-not $ok) {
+            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            throw "v2 배포 확인 실패"
+          }
           Write-Host "v2 배포 확인 OK"
 
       - name: "=== VERIFY 3/4: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
@@ -207,8 +213,9 @@ jobs:
           git commit -m "v3 (broken build)" -q
           git push gitea HEAD:master
 
-          Start-Sleep -Seconds 5
-          $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
+          Start-Sleep -Seconds 8
+          $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+          Write-Host "status=$($r.StatusCode)"
           if ($r.Content -notmatch "v2") { throw "빌드 실패 후 live가 v2로 유지되지 않음" }
           Write-Host "live 무손상 확인 OK (여전히 v2)"
 
@@ -226,12 +233,15 @@ jobs:
           $ok = $false
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            try {
-              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 5
-              if ($r.Content -match "v1") { $ok = $true; break }
-            } catch { Write-Host "재시도: $_" }
+            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+            Write-Host "재시도 $i : status=$($r.StatusCode)"
+            if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
           }
-          if (-not $ok) { throw "rollback 후 v1 확인 실패" }
+          if (-not $ok) {
+            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            throw "rollback 후 v1 확인 실패"
+          }
           Write-Host "rollback 후 v1 확인 OK"
 
           Write-Host "--- bonghwa.ps1 status ---"
