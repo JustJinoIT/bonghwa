@@ -17,13 +17,17 @@ jobs:
         with:
           fetch-depth: 0   # shallow clone은 Gitea push가 거부함 (shallow update not allowed)
 
-      - name: "=== SETUP 0/4: runner.temp 기반 경로 고정 ==="
+      - name: "=== SETUP 0/4: 경로 고정 ==="
         shell: pwsh
         run: |
           # GITHUB_ENV는 이후 Actions 스텝에만 전달된다. Gitea는 예약 작업으로
           # 기동해서 이 상속 체인 밖에 있으므로, Gitea가 스폰하는 hook->deploy.ps1이
           # 같은 값을 보게 하려면 Machine 스코프에도 같이 써야 한다.
-          $base = "${{ runner.temp }}\bonghwa"
+          # WorkDir/ReleasesDir은 C:\ 고정 — IIS AppPool 계정이 runner.temp(D:\, 임시
+          # 디스크)에 읽기 권한이 없어서 junction 경유 파일이 전부 보여도 ASP.NET이
+          # "Could not load type"로 실패했다 (bin\*.dll 로드 실패). 프로덕션 기본값과
+          # 동일한 C:\bonghwa를 그대로 써서 볼륨 경계를 없앤다.
+          $base = "C:\bonghwa"
           $pairs = @{
             "BONGHWA_WORK_DIR"     = "$base\work"
             "BONGHWA_RELEASES_DIR" = "$base\releases"
