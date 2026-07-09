@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $C = $BonghwaConfig
 
 function Log($msg) { Write-Host "[deploy] $msg" }
-function History($action, $commit, $release) {
+function Write-BonghwaHistory($action, $commit, $release) {
     "$(Get-Date -Format o)|$action|$commit|$release" | Add-Content -Path $C.HistoryFile
 }
 
@@ -61,7 +61,7 @@ try {
 
     # 5. 이력 + 오래된 릴리즈 정리
     Log "5/5 record history"
-    History "DEPLOY" $Commit $releaseDir
+    Write-BonghwaHistory "DEPLOY" $Commit $releaseDir
     Get-ChildItem $C.ReleasesDir -Directory | Sort-Object Name -Descending |
         Select-Object -Skip $C.KeepReleases | Remove-Item -Recurse -Force
 
@@ -69,6 +69,6 @@ try {
 }
 catch {
     Log "FAIL: $_"
-    History "DEPLOY_FAIL" $Commit "$_"
+    Write-BonghwaHistory "DEPLOY_FAIL" $Commit "$_"
     exit 1
 }
