@@ -69,7 +69,32 @@ foreach ($dir in @($C.WorkDir, $C.ReleasesDir, (Split-Path $C.HistoryFile -Paren
     }
 }
 
-# 6. Gitea post-receive hook 설치 (선택)
+# 6. IIS Application 등록 — LiveJunction이 그냥 하위폴더면 ASP.NET이 부모 사이트의
+#    bin을 찾아서 "Could not load type"로 실패한다. 별도 Application으로 등록해야
+#    그 경로 자체를 컴파일 도메인(=자기 bin) 경계로 인식한다.
+Write-Host ""
+Write-Host "[setup] IIS Application 등록"
+Import-Module WebAdministration -ErrorAction SilentlyContinue
+if (Get-Module WebAdministration) {
+    $siteName = "Default Web Site"
+    $appName = Split-Path $C.LiveJunction -Leaf
+    $existing = Get-WebApplication -Site $siteName -Name $appName -ErrorAction SilentlyContinue
+    if ($existing) {
+        Write-Host "  이미 등록됨: $siteName/$appName"
+    }
+    else {
+        if (-not (Test-Path $C.LiveJunction)) {
+            New-Item -ItemType Directory -Path $C.LiveJunction -Force | Out-Null
+        }
+        New-WebApplication -Site $siteName -Name $appName -PhysicalPath $C.LiveJunction -ApplicationPool $C.AppPoolName | Out-Null
+        Write-Host "  등록 완료: $siteName/$appName -> $($C.LiveJunction) (풀: $($C.AppPoolName))"
+    }
+}
+else {
+    Write-Host "  WebAdministration 모듈 없음 — 건너뜀. IIS 관리 콘솔에서 수동 등록 필요."
+}
+
+# 7. Gitea post-receive hook 설치 (선택)
 if ($GiteaRepoPath) {
     Write-Host ""
     Write-Host "[setup] Gitea post-receive hook 설치 -> $GiteaRepoPath"
