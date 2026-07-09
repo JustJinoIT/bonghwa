@@ -22,10 +22,35 @@ push → hook 발화 → build → 릴리즈 스테이징 → junction 스위칭
 4. 경로/설정은 `bonghwa.config.ps1` 한 곳. 비밀값은 코드·설정 어디에도 없음
    (현재 MVP 범위엔 비밀값 자체가 불필요 — 전부 로컬 파일시스템 작업).
 
-## 남은 실검증 (Windows 서버에서만 가능)
-- [ ] MSBuild 실제 빌드 (솔루션 경로·빌드 산출물 경로 확인)
-- [ ] IIS junction 스위칭 시 파일 잠금 여부 (필요시 app_offline.htm 추가)
-- [ ] Gitea custom hook 등록 방식 확인 (파일 직접 배치 vs 관리 UI)
+## 실검증 결과 (2026-07-09, GitHub Actions windows-2022 러너)
+로컬 접근 가능한 Windows 서버가 없어 GitHub Actions `windows-2022` 러너를
+실제 Windows 환경으로 사용해 검증(`.github/workflows/verify-windows.yml`).
+sample-app(최소 ASP.NET Framework 4.8 웹앱)을 리포에 포함해 실제 MSBuild+IIS+
+Gitea 전체 사이클을 push→build→deploy→실패경로→rollback까지 자동 반복 실행,
+전부 PASS 확인.
+
+- [x] MSBuild 실제 빌드 — 확인. ASP.NET Web Application은 `OutputPath=bin\`가
+  Debug/Release 공용 플랫 구조라 `bin\Release\`가 아님 (config PublishOutput 수정).
+  MSBuild `_CopyWebApplication` 타깃은 기대대로 안 맞아, deploy.ps1이 프로젝트
+  폴더를 obj만 제외하고 통째로 복사하는 방식으로 대체 (fix 커밋 참고).
+- [x] Gitea custom hook 등록 방식 확인 — **파일 직접 배치**로 확정.
+  `install.ps1 -GiteaRepoPath`가 bare repo의 `hooks/post-receive`에 파일을 직접
+  복사. Gitea는 표준 git hook을 그대로 실행 — 별도 관리 UI 등록 불필요.
+- [ ] IIS junction 스위칭 시 파일 잠금 — 이번 검증에서는 미발생 (KeepReleases
+  임계치에 못 미쳐 정리 단계 자체가 실행 안 됨). 실서버에서 릴리즈가 쌓이면
+  재확인 필요.
+
+### 실검증 중 발견한 추가 버그 (전부 fix 커밋으로 반영)
+- **`History` 함수명이 PowerShell 내장 별칭(`history`→`Get-History`)과 충돌** —
+  모든 실패 경로에서 `Cannot bind parameter 'Count'`로 진짜 에러를 가렸다.
+  `Write-BonghwaHistory`로 개명.
+- **IIS Application 미등록** — `/app`이 그냥 하위폴더면 ASP.NET이 부모 사이트의
+  bin을 찾아 "Could not load type"로 실패. install.ps1이 `New-WebApplication`으로
+  LiveJunction을 별도 Application으로 등록하도록 추가.
+- **WorkDir/ReleasesDir을 다른 볼륨(D:\)에 두면 IIS AppPool 권한 문제 소지** —
+  C:\(IIS 사이트와 같은 볼륨)로 고정.
+- **.ps1 파일에 UTF-8 BOM 없으면 Windows PowerShell 5.1이 한글/화살표를 깨뜨림**
+  — 전체 .ps1에 BOM 추가.
 
 ## 프로토타입 처리
 `sim/`은 검증 완료 후에도 **데모/README용으로 유지** (심사위원이 Windows 없이
