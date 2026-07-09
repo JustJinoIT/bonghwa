@@ -177,15 +177,20 @@ jobs:
           if ($target) { Get-ChildItem $target -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName } }
 
           $ok = $false
+          $r = $null
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-            Write-Host "재시도 $i : status=$($r.StatusCode)"
-            if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+              Write-Host "재시도 $i : status=$($r.StatusCode)"
+              if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
+            } catch { Write-Host "재시도 $i : 예외 $($_.Exception.Message)" }
           }
           if (-not $ok) {
-            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
-            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            if ($r) {
+              Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+              Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            }
             throw "v1 배포 확인 실패"
           }
           Write-Host "v1 배포 확인 OK"
@@ -201,15 +206,20 @@ jobs:
           git push gitea HEAD:master
 
           $ok = $false
+          $r = $null
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-            Write-Host "재시도 $i : status=$($r.StatusCode)"
-            if ($r.StatusCode -eq 200 -and $r.Content -match "v2") { $ok = $true; break }
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+              Write-Host "재시도 $i : status=$($r.StatusCode)"
+              if ($r.StatusCode -eq 200 -and $r.Content -match "v2") { $ok = $true; break }
+            } catch { Write-Host "재시도 $i : 예외 $($_.Exception.Message)" }
           }
           if (-not $ok) {
-            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
-            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            if ($r) {
+              Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+              Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            }
             throw "v2 배포 확인 실패"
           }
           Write-Host "v2 배포 확인 OK"
@@ -224,10 +234,16 @@ jobs:
           git commit -m "v3 (broken build)" -q
           git push gitea HEAD:master
 
-          Start-Sleep -Seconds 8
-          $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-          Write-Host "status=$($r.StatusCode)"
-          if ($r.Content -notmatch "v2") { throw "빌드 실패 후 live가 v2로 유지되지 않음" }
+          $r = $null
+          for ($i = 0; $i -lt 5; $i++) {
+            Start-Sleep -Seconds 3
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+              Write-Host "status=$($r.StatusCode)"
+              if ($r.StatusCode -eq 200) { break }
+            } catch { Write-Host "예외: $($_.Exception.Message)" }
+          }
+          if (-not $r -or $r.Content -notmatch "v2") { throw "빌드 실패 후 live가 v2로 유지되지 않음" }
           Write-Host "live 무손상 확인 OK (여전히 v2)"
 
           $history = Get-Content $env:BONGHWA_HISTORY_FILE
@@ -242,15 +258,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rollback 실행 실패" }
 
           $ok = $false
+          $r = $null
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
-            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-            Write-Host "재시도 $i : status=$($r.StatusCode)"
-            if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+              Write-Host "재시도 $i : status=$($r.StatusCode)"
+              if ($r.StatusCode -eq 200 -and $r.Content -match "v1") { $ok = $true; break }
+            } catch { Write-Host "재시도 $i : 예외 $($_.Exception.Message)" }
           }
           if (-not $ok) {
-            Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
-            Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            if ($r) {
+              Write-Host "--- 마지막 응답 본문(최대 2000자) ---"
+              Write-Host $r.Content.Substring(0, [Math]::Min(2000, $r.Content.Length))
+            }
             throw "rollback 후 v1 확인 실패"
           }
           Write-Host "rollback 후 v1 확인 OK"
