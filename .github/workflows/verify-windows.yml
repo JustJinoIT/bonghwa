@@ -165,6 +165,13 @@ jobs:
           git config user.name "bonghwa-ci"
           git push gitea HEAD:master
 
+          Write-Host "--- 배포된 실제 파일 (C:\inetpub\wwwroot\app, junction 경유) ---"
+          Get-ChildItem "C:\inetpub\wwwroot\app" -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+          Write-Host "--- (junction target 직접) ---"
+          $target = (Get-Item "C:\inetpub\wwwroot\app" -ErrorAction SilentlyContinue).Target
+          Write-Host "junction target: $target"
+          if ($target) { Get-ChildItem $target -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName } }
+
           $ok = $false
           for ($i = 0; $i -lt 15; $i++) {
             Start-Sleep -Seconds 2
