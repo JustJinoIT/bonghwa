@@ -8,6 +8,7 @@ on:
 jobs:
   verify:
     runs-on: windows-2022
+    timeout-minutes: 25
     env:
       GITEA_VERSION: "1.26.4"
       GITEA_URL: http://localhost:3000
@@ -157,7 +158,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 사전점검 실패" }
           Get-Content (Join-Path $bareRepoPath "hooks\post-receive")
 
+      - name: "=== 격리망 시뮬레이션 시작: outbound 전체 차단 (netsh advfirewall) ==="
+        shell: pwsh
+        run: |
+          netsh advfirewall firewall add rule name="BonghwaBlockOutbound" dir=out action=block protocol=any
+          netsh advfirewall firewall show rule name="BonghwaBlockOutbound"
+          Write-Host "--- 차단 확인: github.com 아웃바운드가 실제로 막히는지 ---"
+          try {
+            Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 | Out-Null
+            Write-Host "경고: 외부 접속이 여전히 됨 (차단 실패)"
+          } catch {
+            Write-Host "확인됨: 외부 접속 차단됨 -> $($_.Exception.Message)"
+          }
+
       - name: "=== VERIFY 1/4: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
@@ -196,6 +211,7 @@ jobs:
           Write-Host "v1 배포 확인 OK"
 
       - name: "=== VERIFY 2/4: v2 재push → 갱신 확인 ==="
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
@@ -225,6 +241,7 @@ jobs:
           Write-Host "v2 배포 확인 OK"
 
       - name: "=== VERIFY 3/4: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
@@ -252,6 +269,7 @@ jobs:
           $history | Select-Object -Last 5
 
       - name: "=== VERIFY 4/4: bonghwa.ps1 rollback/status/history ==="
+        timeout-minutes: 3
         shell: pwsh
         run: |
           .\scripts\bonghwa.ps1 rollback
@@ -280,6 +298,19 @@ jobs:
           .\scripts\bonghwa.ps1 status
           Write-Host "--- bonghwa.ps1 history ---"
           .\scripts\bonghwa.ps1 history
+
+      - name: "=== 격리망 시뮬레이션 종료: outbound 차단 해제 ==="
+        if: always()   # VERIFY 스텝이 실패/타임아웃해도 반드시 해제 — 안 그러면 러너가 계속 격리 상태로 남음
+        shell: pwsh
+        run: |
+          netsh advfirewall firewall delete rule name="BonghwaBlockOutbound"
+          Write-Host "--- 해제 확인 ---"
+          try {
+            Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 | Out-Null
+            Write-Host "확인됨: 외부 접속 복구됨"
+          } catch {
+            Write-Host "경고: 해제 후에도 외부 접속 실패 -> $($_.Exception.Message)"
+          }
 
       - name: "=== 판정: push→build→deploy→실패경로→rollback 전체 사이클 ==="
         if: always()
