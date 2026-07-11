@@ -315,6 +315,12 @@ jobs:
           # 정상 빌드 반복이 목적이므로 먼저 걷어내고 정상 상태부터 시작한다.
           (Get-Content "sample-app\SampleApp\Default.aspx.cs") -notmatch "this is not valid C#" | Set-Content "sample-app\SampleApp\Default.aspx.cs"
 
+          # history.log는 job 전체에 걸쳐 누적된다 — VERIFY 3/6이 남긴 DEPLOY_FAIL
+          # 항목까지 섞여서 오탐이 나지 않도록, 이 구간 시작 시점 줄 수를 기억해두고
+          # 그 이후에 "추가된" 줄만 검사한다.
+          $historyLinesBefore = 0
+          if (Test-Path $env:BONGHWA_HISTORY_FILE) { $historyLinesBefore = (Get-Content $env:BONGHWA_HISTORY_FILE).Count }
+
           for ($n = 4; $n -le 8; $n++) {
             (Get-Content "sample-app\SampleApp\Default.aspx.cs") -replace 'Response.Write\("v\d+"\)', "Response.Write(`"v$n`")" | Set-Content "sample-app\SampleApp\Default.aspx.cs"
             git add .
@@ -345,15 +351,16 @@ jobs:
 
           Write-Host "--- DEPLOY_FAIL 오탐 여부: deploy.ps1은 5단계(이력기록) 이후 정리 실패도 같은 try에 걸려 DEPLOY 직후 DEPLOY_FAIL로 오기록될 수 있는 구조 ---"
           $history = Get-Content $env:BONGHWA_HISTORY_FILE
-          Write-Host "--- 이번 구간 이력 마지막 10줄 ---"
-          $history | Select-Object -Last 10
-          $recentFails = $history | Select-String "DEPLOY_FAIL"
+          Write-Host "--- 이번 구간(v4~v8)에서 새로 추가된 이력 ---"
+          $newLines = $history | Select-Object -Skip $historyLinesBefore
+          $newLines
+          $recentFails = $newLines | Select-String "DEPLOY_FAIL"
           if ($recentFails) {
-            Write-Host "발견된 DEPLOY_FAIL 이력 (전체):"
+            Write-Host "v4~v8 구간에서 새로 발견된 DEPLOY_FAIL 이력:"
             $recentFails
             throw "v4~v8 정리 구간에서 DEPLOY_FAIL 발생 — 성공한 배포가 정리 단계 실패로 실패 처리됐을 가능성 (deploy.ps1 버그 의심)"
           }
-          Write-Host "DEPLOY_FAIL 오탐 없음 확인 OK"
+          Write-Host "DEPLOY_FAIL 오탐 없음 확인 OK (VERIFY 3/6이 남긴 과거 DEPLOY_FAIL은 제외하고 이번 구간만 검사)"
 
       - name: "=== VERIFY 6/6: 동시성 — push 트리거 배포와 수동 rollback을 거의 동시에 실행 ==="
         timeout-minutes: 3
