@@ -39,6 +39,14 @@ Gitea 전체 사이클을 push→build→deploy→실패경로→rollback까지 
 - [ ] IIS junction 스위칭 시 파일 잠금 — 이번 검증에서는 미발생 (KeepReleases
   임계치에 못 미쳐 정리 단계 자체가 실행 안 됨). 실서버에서 릴리즈가 쌓이면
   재확인 필요.
+- [x] **격리망(outbound 차단) 조건에서의 동작 — 실증 완료 (2026-07-10).**
+  `netsh advfirewall firewall add rule ... dir=out action=block protocol=any`로
+  러너 자체에 실제 OS 레벨 차단을 걸고(`github.com:443` 접속 시도로 차단 확인:
+  "An attempt was made to access a socket in a way forbidden by its access
+  permissions") 그 상태에서 v1 배포→v2 재배포→빌드실패(무손상)→rollback 전체
+  사이클 실행, 전부 PASS. 봉화의 배포 경로는 전부 localhost(Gitea:3000, IIS:80)
+  통신만 쓴다는 핵심 주장이 실측으로 확인됨. 차단 해제도 접속 복구로 확인.
+  GH Actions 러너 자체의 제어 채널 통신도 안 끊김(job 2m44s 정상 종료, hang 없음).
 
 ### 실검증 중 발견한 추가 버그 (전부 fix 커밋으로 반영)
 - **`History` 함수명이 PowerShell 내장 별칭(`history`→`Get-History`)과 충돌** —
