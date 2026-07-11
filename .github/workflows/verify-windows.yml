@@ -171,7 +171,7 @@ jobs:
             Write-Host "확인됨: 외부 접속 차단됨 -> $($_.Exception.Message)"
           }
 
-      - name: "=== VERIFY 1/4: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
+      - name: "=== VERIFY 1/6: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -210,7 +210,7 @@ jobs:
           }
           Write-Host "v1 배포 확인 OK"
 
-      - name: "=== VERIFY 2/4: v2 재push → 갱신 확인 ==="
+      - name: "=== VERIFY 2/6: v2 재push → 갱신 확인 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -240,7 +240,7 @@ jobs:
           }
           Write-Host "v2 배포 확인 OK"
 
-      - name: "=== VERIFY 3/4: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
+      - name: "=== VERIFY 3/6: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -268,7 +268,7 @@ jobs:
           Write-Host "DEPLOY_FAIL 이력 확인 OK"
           $history | Select-Object -Last 5
 
-      - name: "=== VERIFY 4/4: bonghwa.ps1 rollback/status/history ==="
+      - name: "=== VERIFY 4/6: bonghwa.ps1 rollback/status/history ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -299,6 +299,115 @@ jobs:
           Write-Host "--- bonghwa.ps1 history ---"
           .\scripts\bonghwa.ps1 history
 
+      - name: "=== VERIFY 5/6: KeepReleases 정리 실사용 — 파일 잠금 및 DEPLOY_FAIL 오탐 여부 ==="
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          # NOTES.md 미검증 항목: "릴리즈가 쌓이면 junction 스위칭 시 파일 잠금 재확인 필요".
+          # 기본 KeepReleases=10까지 쌓으려면 push가 많이 필요하니 CI에서만 임계치를 낮춰
+          # 실제로 정리(cleanup) 코드 경로 자체를 태운다.
+          [Environment]::SetEnvironmentVariable("BONGHWA_KEEP_RELEASES", "3", "Machine")
+
+          $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
+          cd $devClone
+
+          # VERIFY 3/6에서 심어둔 빌드 파손 라인이 워킹트리에 남아있다 — 정리 검증은
+          # 정상 빌드 반복이 목적이므로 먼저 걷어내고 정상 상태부터 시작한다.
+          (Get-Content "sample-app\SampleApp\Default.aspx.cs") -notmatch "this is not valid C#" | Set-Content "sample-app\SampleApp\Default.aspx.cs"
+
+          for ($n = 4; $n -le 8; $n++) {
+            (Get-Content "sample-app\SampleApp\Default.aspx.cs") -replace 'Response.Write\("v\d+"\)', "Response.Write(`"v$n`")" | Set-Content "sample-app\SampleApp\Default.aspx.cs"
+            git add .
+            git commit -m "v$n (KeepReleases 정리 실사용 검증)" -q
+            git push gitea HEAD:master
+
+            $ok = $false
+            $r = $null
+            for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 2
+              try {
+                $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+                if ($r.StatusCode -eq 200 -and $r.Content -match "v$n") { $ok = $true; break }
+              } catch { }
+            }
+            if (-not $ok) { throw "v$n 배포 확인 실패 (KeepReleases 검증 반복 중)" }
+            Write-Host "v$n 배포 확인 OK"
+          }
+
+          Write-Host "--- 릴리즈 폴더 현황 (KeepReleases=3 이하로 정리됐어야 함) ---"
+          $releaseDirs = Get-ChildItem $env:BONGHWA_RELEASES_DIR -Directory
+          Write-Host "현재 릴리즈 폴더 수: $($releaseDirs.Count)"
+          $releaseDirs | ForEach-Object { Write-Host "  $($_.Name)" }
+          if ($releaseDirs.Count -gt 3) {
+            throw "정리 실패: KeepReleases=3인데 $($releaseDirs.Count)개 남음 — Remove-Item이 파일 잠금 등으로 조용히 실패했을 가능성"
+          }
+          Write-Host "릴리즈 폴더 정리 확인 OK ($($releaseDirs.Count)개)"
+
+          Write-Host "--- DEPLOY_FAIL 오탐 여부: deploy.ps1은 5단계(이력기록) 이후 정리 실패도 같은 try에 걸려 DEPLOY 직후 DEPLOY_FAIL로 오기록될 수 있는 구조 ---"
+          $history = Get-Content $env:BONGHWA_HISTORY_FILE
+          Write-Host "--- 이번 구간 이력 마지막 10줄 ---"
+          $history | Select-Object -Last 10
+          $recentFails = $history | Select-String "DEPLOY_FAIL"
+          if ($recentFails) {
+            Write-Host "발견된 DEPLOY_FAIL 이력 (전체):"
+            $recentFails
+            throw "v4~v8 정리 구간에서 DEPLOY_FAIL 발생 — 성공한 배포가 정리 단계 실패로 실패 처리됐을 가능성 (deploy.ps1 버그 의심)"
+          }
+          Write-Host "DEPLOY_FAIL 오탐 없음 확인 OK"
+
+      - name: "=== VERIFY 6/6: 동시성 — push 트리거 배포와 수동 rollback을 거의 동시에 실행 ==="
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          # deploy.ps1 / rollback.ps1 모두 락 없이 같은 LiveJunction에 rmdir+mklink를
+          # 직접 수행한다 (코드 확인 완료). git push는 receive-pack이 post-receive 훅을
+          # 동기 실행하므로 같은 저장소로의 순차 push끼리는 자연 직렬화되지만, "push로
+          # 트리거된 배포"와 "운영자가 별도로 실행하는 rollback"은 서로 다른 프로세스라
+          # 잠금이 없다 — 실제 운영에서 나올 수 있는 경합 조건.
+          $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
+          cd $devClone
+          (Get-Content "sample-app\SampleApp\Default.aspx.cs") -replace 'Response.Write\("v\d+"\)', 'Response.Write("v9")' | Set-Content "sample-app\SampleApp\Default.aspx.cs"
+          git add .
+          git commit -m "v9 (동시성 경합 검증용)" -q
+
+          $pushJob = Start-Job -ScriptBlock {
+            param($dir, $url)
+            Set-Location $dir
+            & git push $url HEAD:master 2>&1 | Out-String
+          } -ArgumentList $devClone, $env:GITEA_PUSH_URL
+
+          Start-Sleep -Milliseconds 300   # deploy.ps1이 MSBuild~junction 스위칭 구간에 들어갈 정도의 지연
+          Write-Host "--- rollback을 push 처리 중간에 실행 ---"
+          $rollbackOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\bonghwa.ps1" rollback 2>&1 | Out-String
+          $rollbackExit = $LASTEXITCODE
+          Write-Host $rollbackOutput
+          Write-Host "rollback 종료 코드: $rollbackExit"
+
+          $pushOutput = Receive-Job -Job $pushJob -Wait
+          Remove-Job -Job $pushJob
+          Write-Host "--- push(및 hook 트리거 deploy) 출력 ---"
+          Write-Host $pushOutput
+
+          Write-Host "--- 경합 후 최종 상태: junction이 유효한 대상을 가리키는지 ---"
+          $item = Get-Item "C:\inetpub\wwwroot\app" -ErrorAction SilentlyContinue
+          if (-not $item) { throw "경합 후 junction 자체가 사라짐 — 복구 불가 상태" }
+          $target = $item.Target
+          Write-Host "junction target: $target"
+          if (-not $target -or -not (Test-Path $target)) { throw "경합 후 junction target이 존재하지 않는 경로를 가리킴: $target" }
+          Write-Host "junction 유효성 확인 OK"
+
+          Write-Host "--- 경합 후 사이트가 계속 응답하는지 (버전 값은 비결정적이라 단언하지 않음) ---"
+          try {
+            $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+            Write-Host "status=$($r.StatusCode), content 일부: $($r.Content.Substring(0, [Math]::Min(200, $r.Content.Length)))"
+            if ($r.StatusCode -ne 200) { throw "경합 후 사이트가 200이 아님 (status=$($r.StatusCode))" }
+          } catch {
+            throw "경합 후 사이트 응답 실패: $($_.Exception.Message)"
+          }
+
+          Write-Host "--- history.log 마지막 6줄 (참고 — 순서는 비결정적일 수 있음) ---"
+          Get-Content $env:BONGHWA_HISTORY_FILE -Tail 6
+
       - name: "=== 격리망 시뮬레이션 종료: outbound 차단 해제 ==="
         if: always()   # VERIFY 스텝이 실패/타임아웃해도 반드시 해제 — 안 그러면 러너가 계속 격리 상태로 남음
         shell: pwsh
@@ -316,5 +425,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Write-Host "실행 순서: v1 배포 -> v2 배포 -> 빌드실패(live 무손상) -> rollback(v1 복귀)"
-          Write-Host "위 VERIFY 1~4 스텝이 전부 성공했다면 PASS. 하나라도 실패했으면 이 job은 이미 실패 상태입니다."
+          Write-Host "실행 순서: v1 배포 -> v2 배포 -> 빌드실패(live 무손상) -> rollback(v1 복귀) -> KeepReleases 정리 실사용 -> 동시성 경합"
+          Write-Host "위 VERIFY 1~6 스텝이 전부 성공했다면 PASS. 하나라도 실패했으면 이 job은 이미 실패 상태입니다."
