@@ -171,7 +171,7 @@ jobs:
             Write-Host "확인됨: 외부 접속 차단됨 -> $($_.Exception.Message)"
           }
 
-      - name: "=== VERIFY 1/6: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
+      - name: "=== VERIFY 1/7: 이 구간부터 localhost 통신만 — v1 push → deploy → 응답 확인 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -210,7 +210,7 @@ jobs:
           }
           Write-Host "v1 배포 확인 OK"
 
-      - name: "=== VERIFY 2/6: v2 재push → 갱신 확인 ==="
+      - name: "=== VERIFY 2/7: v2 재push → 갱신 확인 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -240,7 +240,7 @@ jobs:
           }
           Write-Host "v2 배포 확인 OK"
 
-      - name: "=== VERIFY 3/6: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
+      - name: "=== VERIFY 3/7: 빌드 깨지는 커밋 push → live v2 무손상 + DEPLOY_FAIL 이력 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -268,7 +268,7 @@ jobs:
           Write-Host "DEPLOY_FAIL 이력 확인 OK"
           $history | Select-Object -Last 5
 
-      - name: "=== VERIFY 4/6: bonghwa.ps1 rollback/status/history ==="
+      - name: "=== VERIFY 4/7: bonghwa.ps1 rollback/status/history ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -299,7 +299,7 @@ jobs:
           Write-Host "--- bonghwa.ps1 history ---"
           .\scripts\bonghwa.ps1 history
 
-      - name: "=== VERIFY 5/6: KeepReleases 정리 실사용 — 파일 잠금 및 DEPLOY_FAIL 오탐 여부 ==="
+      - name: "=== VERIFY 5/7: KeepReleases 정리 실사용 — 파일 잠금 및 DEPLOY_FAIL 오탐 여부 ==="
         timeout-minutes: 4
         shell: pwsh
         run: |
@@ -311,11 +311,11 @@ jobs:
           $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
           cd $devClone
 
-          # VERIFY 3/6에서 심어둔 빌드 파손 라인이 워킹트리에 남아있다 — 정리 검증은
+          # VERIFY 3/7에서 심어둔 빌드 파손 라인이 워킹트리에 남아있다 — 정리 검증은
           # 정상 빌드 반복이 목적이므로 먼저 걷어내고 정상 상태부터 시작한다.
           (Get-Content "sample-app\SampleApp\Default.aspx.cs") -notmatch "this is not valid C#" | Set-Content "sample-app\SampleApp\Default.aspx.cs"
 
-          # history.log는 job 전체에 걸쳐 누적된다 — VERIFY 3/6이 남긴 DEPLOY_FAIL
+          # history.log는 job 전체에 걸쳐 누적된다 — VERIFY 3/7이 남긴 DEPLOY_FAIL
           # 항목까지 섞여서 오탐이 나지 않도록, 이 구간 시작 시점 줄 수를 기억해두고
           # 그 이후에 "추가된" 줄만 검사한다.
           $historyLinesBefore = 0
@@ -360,9 +360,9 @@ jobs:
             $recentFails
             throw "v4~v8 정리 구간에서 DEPLOY_FAIL 발생 — 성공한 배포가 정리 단계 실패로 실패 처리됐을 가능성 (deploy.ps1 버그 의심)"
           }
-          Write-Host "DEPLOY_FAIL 오탐 없음 확인 OK (VERIFY 3/6이 남긴 과거 DEPLOY_FAIL은 제외하고 이번 구간만 검사)"
+          Write-Host "DEPLOY_FAIL 오탐 없음 확인 OK (VERIFY 3/7이 남긴 과거 DEPLOY_FAIL은 제외하고 이번 구간만 검사)"
 
-      - name: "=== VERIFY 6/6: 동시성 — push 트리거 배포와 수동 rollback을 거의 동시에 실행 ==="
+      - name: "=== VERIFY 6/7: 동시성 — push 트리거 배포와 수동 rollback을 실제로 겹치게 실행 ==="
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -371,8 +371,14 @@ jobs:
           # 동기 실행하므로 같은 저장소로의 순차 push끼리는 자연 직렬화되지만, "push로
           # 트리거된 배포"와 "운영자가 별도로 실행하는 rollback"은 서로 다른 프로세스라
           # 잠금이 없다 — 실제 운영에서 나올 수 있는 경합 조건.
+          #
+          # 이전 시도(300ms 지연)는 git credential-manager의 host-provider 자동탐지가
+          # 4초 가까이 걸려 실제로는 안 겹치고 순차 실행됐다. 이번엔 그 지연의 원인을
+          # 없애고(credential.helper 비활성화 — URL에 이미 자격증명이 박혀있어 불필요),
+          # 겹침 여부를 "믿음"이 아니라 타임스탬프로 직접 증명한다.
           $devClone = Join-Path $env:RUNNER_TEMP "dev-clone"
           cd $devClone
+          git config --local credential.helper ""
           (Get-Content "sample-app\SampleApp\Default.aspx.cs") -replace 'Response.Write\("v\d+"\)', 'Response.Write("v9")' | Set-Content "sample-app\SampleApp\Default.aspx.cs"
           git add .
           git commit -m "v9 (동시성 경합 검증용)" -q
@@ -380,40 +386,120 @@ jobs:
           $pushJob = Start-Job -ScriptBlock {
             param($dir, $url)
             Set-Location $dir
-            & git push $url HEAD:master 2>&1 | Out-String
+            $t0 = Get-Date
+            $out = & git push $url HEAD:master 2>&1 | Out-String
+            $t1 = Get-Date
+            [PSCustomObject]@{ Start = $t0; End = $t1; Output = $out }
           } -ArgumentList $devClone, $env:GITEA_PUSH_URL
 
-          Start-Sleep -Milliseconds 300   # deploy.ps1이 MSBuild~junction 스위칭 구간에 들어갈 정도의 지연
-          Write-Host "--- rollback을 push 처리 중간에 실행 ---"
+          $rollbackStart = Get-Date
+          Write-Host "--- rollback을 push와 거의 동시에 시작 (지연 없음) ---"
           $rollbackOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\bonghwa.ps1" rollback 2>&1 | Out-String
           $rollbackExit = $LASTEXITCODE
+          $rollbackEnd = Get-Date
           Write-Host $rollbackOutput
-          Write-Host "rollback 종료 코드: $rollbackExit"
+          Write-Host "rollback 종료 코드: $rollbackExit, 구간: $($rollbackStart.ToString('o')) ~ $($rollbackEnd.ToString('o'))"
 
-          $pushOutput = Receive-Job -Job $pushJob -Wait
+          $pushResult = Receive-Job -Job $pushJob -Wait
           Remove-Job -Job $pushJob
           Write-Host "--- push(및 hook 트리거 deploy) 출력 ---"
-          Write-Host $pushOutput
+          Write-Host $pushResult.Output
+          Write-Host "push 구간: $($pushResult.Start.ToString('o')) ~ $($pushResult.End.ToString('o'))"
 
-          Write-Host "--- 경합 후 최종 상태: junction이 유효한 대상을 가리키는지 ---"
+          Write-Host "--- 실제로 겹쳤는지 타임스탬프로 확인 (겹치지 않으면 이번 실행도 순차였다고 정직하게 기록) ---"
+          $overlapped = ($rollbackStart -lt $pushResult.End) -and ($pushResult.Start -lt $rollbackEnd)
+          if ($overlapped) {
+            Write-Host "겹침 확인됨: rollback[$($rollbackStart.ToString('HH:mm:ss.fff'))~$($rollbackEnd.ToString('HH:mm:ss.fff'))] vs push[$($pushResult.Start.ToString('HH:mm:ss.fff'))~$($pushResult.End.ToString('HH:mm:ss.fff'))]"
+          } else {
+            Write-Host "경고: 이번 실행도 실제로는 안 겹치고 순차 실행됨 (타이밍 이슈는 CI 환경 변동성 — 이 결과만으로 '동시 접근 안전'을 단언하지 않는다)"
+          }
+
+          Write-Host "--- 결과 상태: junction이 유효한 대상을 가리키는지 ---"
           $item = Get-Item "C:\inetpub\wwwroot\app" -ErrorAction SilentlyContinue
-          if (-not $item) { throw "경합 후 junction 자체가 사라짐 — 복구 불가 상태" }
+          if (-not $item) { throw "junction 자체가 사라짐 — 복구 불가 상태" }
           $target = $item.Target
           Write-Host "junction target: $target"
-          if (-not $target -or -not (Test-Path $target)) { throw "경합 후 junction target이 존재하지 않는 경로를 가리킴: $target" }
+          if (-not $target -or -not (Test-Path $target)) { throw "junction target이 존재하지 않는 경로를 가리킴: $target" }
           Write-Host "junction 유효성 확인 OK"
 
-          Write-Host "--- 경합 후 사이트가 계속 응답하는지 (버전 값은 비결정적이라 단언하지 않음) ---"
+          Write-Host "--- 사이트가 계속 응답하는지 (버전 값은 비결정적이라 단언하지 않음) ---"
           try {
             $r = Invoke-WebRequest -Uri "http://localhost/app/Default.aspx" -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
             Write-Host "status=$($r.StatusCode), content 일부: $($r.Content.Substring(0, [Math]::Min(200, $r.Content.Length)))"
-            if ($r.StatusCode -ne 200) { throw "경합 후 사이트가 200이 아님 (status=$($r.StatusCode))" }
+            if ($r.StatusCode -ne 200) { throw "사이트가 200이 아님 (status=$($r.StatusCode))" }
           } catch {
-            throw "경합 후 사이트 응답 실패: $($_.Exception.Message)"
+            throw "사이트 응답 실패: $($_.Exception.Message)"
           }
 
           Write-Host "--- history.log 마지막 6줄 (참고 — 순서는 비결정적일 수 있음) ---"
           Get-Content $env:BONGHWA_HISTORY_FILE -Tail 6
+
+      - name: "=== VERIFY 7/7: 동시성 — 같은 junction에 4개 병렬 rollback을 반복 경합시키는 결정론적 스트레스 테스트 ==="
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          # VERIFY 6/7은 git push 타이밍에 기대야 해서 겹침이 비결정적이다.
+          # 여기서는 실제 rollback.ps1 코드를, git/네트워크 타이밍과 무관하게,
+          # 4개 병렬 잡이 같은 LiveJunction에 3초간 반복적으로 rmdir+mklink를
+          # 걸도록 강제해 "겹침 발생 여부"가 아니라 "겹쳤을 때 안전한지"를 직접 검증한다.
+          $releasesDir = $env:BONGHWA_RELEASES_DIR
+          $targets = 1..3 | ForEach-Object {
+            $d = Join-Path $releasesDir "race_target_$_"
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            "race-marker-$_" | Set-Content (Join-Path $d "BUILD_INFO.txt")
+            $d
+          }
+
+          $jobs = 1..4 | ForEach-Object {
+            Start-Job -ScriptBlock {
+              param($scriptPath, $targets, $seconds)
+              $errors = @()
+              $count = 0
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              while ($sw.Elapsed.TotalSeconds -lt $seconds) {
+                $t = $targets | Get-Random
+                try {
+                  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath rollback -Release $t 2>&1 | Out-Null
+                  if ($LASTEXITCODE -ne 0) { $errors += "exit=$LASTEXITCODE target=$t" }
+                } catch {
+                  $errors += "exception: $($_.Exception.Message) target=$t"
+                }
+                $count++
+              }
+              [PSCustomObject]@{ Count = $count; Errors = $errors }
+            } -ArgumentList "$env:GITHUB_WORKSPACE\scripts\bonghwa.ps1", $targets, 3
+          }
+          $results = $jobs | Receive-Job -Wait
+          Remove-Job -Job $jobs
+
+          $totalCalls = ($results | Measure-Object -Property Count -Sum).Sum
+          $allErrors = $results | ForEach-Object { $_.Errors } | Where-Object { $_ }
+          Write-Host "3초간 병렬 rollback 총 호출 수: $totalCalls (잡 4개)"
+          if ($allErrors) {
+            Write-Host "--- rollback 실행 중 발생한 에러 (최대 20개 표시) ---"
+            $allErrors | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" }
+            Write-Host "에러 발생 건수: $($allErrors.Count) / $totalCalls"
+          } else {
+            Write-Host "rollback 호출 중 에러 없음"
+          }
+
+          Write-Host "--- 스트레스 후 최종 상태: junction이 유효한 대상을 가리키는지 (경합 중이라도 최종은 항상 유효해야 함) ---"
+          $item = Get-Item "C:\inetpub\wwwroot\app" -ErrorAction SilentlyContinue
+          if (-not $item) { throw "스트레스 테스트 후 junction 자체가 사라짐 — 복구 불가 상태 (진짜 버그)" }
+          $target = $item.Target
+          Write-Host "junction target: $target"
+          if (-not $target -or -not (Test-Path $target)) { throw "스트레스 테스트 후 junction target이 존재하지 않는 경로를 가리킴: $target (진짜 버그)" }
+          Write-Host "junction 유효성 확인 OK — 병렬 경합 후에도 항상 유효한 대상을 가리킴"
+
+          Write-Host "--- history.log에 조용한 실패(mklink 실패했는데 DONE으로 기록) 여부 확인 ---"
+          Write-Host "(참고: rollback.ps1은 이제 mklink 실패 시 ROLLBACK이 아니라 ROLLBACK_FAIL을 기록한다 — 이번 수정 반영분)"
+          $rollbackFails = Get-Content $env:BONGHWA_HISTORY_FILE | Select-String "ROLLBACK_FAIL"
+          if ($rollbackFails) {
+            Write-Host "ROLLBACK_FAIL 이력 $($rollbackFails.Count)건 발견 (경합 중 mklink 실패가 정상적으로 잡혔다는 뜻 — 버그 아님):"
+            $rollbackFails | Select-Object -First 5
+          } else {
+            Write-Host "ROLLBACK_FAIL 없음 (이번 경합에서는 mklink 자체가 전부 성공)"
+          }
 
       - name: "=== 격리망 시뮬레이션 종료: outbound 차단 해제 ==="
         if: always()   # VERIFY 스텝이 실패/타임아웃해도 반드시 해제 — 안 그러면 러너가 계속 격리 상태로 남음
@@ -432,5 +518,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Write-Host "실행 순서: v1 배포 -> v2 배포 -> 빌드실패(live 무손상) -> rollback(v1 복귀) -> KeepReleases 정리 실사용 -> 동시성 경합"
-          Write-Host "위 VERIFY 1~6 스텝이 전부 성공했다면 PASS. 하나라도 실패했으면 이 job은 이미 실패 상태입니다."
+          Write-Host "실행 순서: v1 배포 -> v2 배포 -> 빌드실패(live 무손상) -> rollback(v1 복귀) -> KeepReleases 정리 실사용 -> 동시성 경합(실사용) -> 동시성 경합(결정론적 스트레스)"
+          Write-Host "위 VERIFY 1~7 스텝이 전부 성공했다면 PASS. 하나라도 실패했으면 이 job은 이미 실패 상태입니다."

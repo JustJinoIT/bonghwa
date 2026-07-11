@@ -23,13 +23,25 @@ if (-not $Release -or -not (Test-Path $Release)) {
     exit 1
 }
 
-& cmd /c rmdir "$($C.LiveJunction)"
-& cmd /c mklink /J "$($C.LiveJunction)" "$Release" | Out-Null
+try {
+    if (Test-Path $C.LiveJunction) {
+        & cmd /c rmdir "$($C.LiveJunction)"
+    }
+    & cmd /c mklink /J "$($C.LiveJunction)" "$Release" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "junction switch failed (mklink exit $LASTEXITCODE)" }
 
-Import-Module WebAdministration -ErrorAction SilentlyContinue
-if (Get-Module WebAdministration) {
-    Restart-WebAppPool -Name $C.AppPoolName -ErrorAction SilentlyContinue
+    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    if (Get-Module WebAdministration) {
+        Restart-WebAppPool -Name $C.AppPoolName -ErrorAction SilentlyContinue
+    }
+
+    "$(Get-Date -Format o)|ROLLBACK|-|$Release" | Add-Content $C.HistoryFile
+    Write-Host "[rollback] DONE. live -> $Release"
 }
-
-"$(Get-Date -Format o)|ROLLBACK|-|$Release" | Add-Content $C.HistoryFile
-Write-Host "[rollback] DONE. live -> $Release"
+catch {
+    # deploy.ps1의 DEPLOY_FAIL과 동일한 원칙: junction이 실제로 안 바뀌었으면
+    # "DONE"을 찍지 않고 실패를 이력에 남긴다 — 조용한 성공 오보고 방지.
+    "$(Get-Date -Format o)|ROLLBACK_FAIL|-|$_" | Add-Content $C.HistoryFile
+    Write-Error "[rollback] FAIL: $_"
+    exit 1
+}
