@@ -45,18 +45,22 @@ Gitea 전체 사이클을 push→build→deploy→실패경로→rollback까지 
   보도록 수정 후 재실행에서 확인 (fix 커밋 참고). **실서버에서 릴리즈가 더
   많이/오래 쌓였을 때(수백 개, 수개월)까지 보장하는 것은 아님** — 이번 검증은
   KeepReleases=3, 5회 반복 범위.
-- [x] **push-트리거 배포 vs 수동 rollback 동시 실행 — 실증 완료 (2026-07-11, `VERIFY 6/6`).**
-  코드 확인 결과 `deploy.ps1`/`rollback.ps1` 모두 `LiveJunction`에 락 없이
-  직접 rmdir+mklink — 실제 운영에서 "push 착신 중 운영자가 rollback 실행"이
-  겹칠 수 있는 구조. CI에서 push를 백그라운드 job으로 걸고 300ms 뒤 rollback을
-  동시 실행, 최종적으로 junction 유효/사이트 200 응답 확인. **다만 이번 실행은
-  진짜 경합이 아니었다** — git의 host-provider 자동탐지 지연(로그에 "auto-detection
-  of host provider took too long (>2000ms)")으로 실제 push/hook 시작이 rollback
-  완료보다 4초 가까이 늦어져, 사실상 순차 실행(rollback 먼저 완료 → 그 다음 deploy)이
-  됐다. 즉 "겹쳤을 때도 안전하다"가 아니라 "이번엔 안 겹쳤다"는 결과 — 진짜
-  동시 접근(같은 순간 rmdir/mklink 경합)에서도 안전한지는 여전히 미확정.
-  재검증하려면 지연을 없애거나 push 쪽도 job으로 걸어 실제 겹침 여부를
-  타임스탬프로 확인하는 개선이 필요.
+- [x] **push-트리거 배포 vs 수동 rollback 동시 실행 — 실제 경합 재현 + 수정 효과 실증 완료 (2026-07-11/12).**
+  1차 시도(`VERIFY 6/6`, 300ms 지연)는 git credential-manager의 host-provider
+  자동탐지 지연(~4초)으로 실제로는 안 겹치고 순차 실행됐다 ("겹쳤을 때도
+  안전하다"가 아니라 "이번엔 안 겹쳤다"였음, 정직하게 기록).
+  2차 시도에서 두 가지로 재설계해 실제 경합을 만들어냄:
+  - `VERIFY 6/7`: dev clone에 `credential.helper ""`로 지연 원인을 제거하고
+    타임스탬프로 겹침을 직접 증명. 실측: rollback `10:58:26.642~27.099` vs
+    push(배포) `10:58:26.885~29.015` — **214ms 실제 겹침 확인.**
+  - `VERIFY 7/7` (신규, 결정론적): git 타이밍에 기대지 않고 실제 `rollback.ps1`
+    코드를 4개 병렬 잡으로 3초간 반복 실행(16회 호출)해 같은 `LiveJunction`에
+    강제 경합. **16회 중 5회가 실제로 mklink 경합 실패(`mklink exit 1`)** —
+    즉 코드 리뷰로 의심했던 레이스가 실측으로 재현된 진짜 버그였음. 이 5회
+    전부 새로 고친 `rollback.ps1`(아래 버그 항목) 덕분에 `ROLLBACK_FAIL`로
+    정확히 기록됨 — **고치기 전이었다면 이 5회 모두 "[rollback] DONE"으로
+    조용히 거짓 성공 보고했을 상황.** 경합 후 최종 junction은 항상 유효한
+    대상을 가리킴 (복구 불능 상태는 발생 안 함).
 - [x] **격리망(outbound 차단) 조건에서의 동작 — 실증 완료 (2026-07-10).**
   `netsh advfirewall firewall add rule ... dir=out action=block protocol=any`로
   러너 자체에 실제 OS 레벨 차단을 걸고(`github.com:443` 접속 시도로 차단 확인:
@@ -77,18 +81,16 @@ Gitea 전체 사이클을 push→build→deploy→실패경로→rollback까지 
   C:\(IIS 사이트와 같은 볼륨)로 고정.
 - **.ps1 파일에 UTF-8 BOM 없으면 Windows PowerShell 5.1이 한글/화살표를 깨뜨림**
   — 전체 .ps1에 BOM 추가.
-
-### 코드 리뷰로 발견 — 아직 실패 재현은 안 됨 (2026-07-11)
-- **`rollback.ps1`이 `mklink` 종료 코드를 확인하지 않음.** `deploy.ps1`은
-  junction 스위칭 후 `$LASTEXITCODE`를 체크해 실패 시 throw하는데
-  (`scripts/deploy.ps1` 4단계), `rollback.ps1`은 같은 자리에서 체크가 없다
-  (`scripts/rollback.ps1` 26-27번줄). mklink가 (경합·권한 등으로) 실패해도
-  `[rollback] DONE`을 그대로 출력하고 이력에도 ROLLBACK을 정상 기록할 수
-  있음 — 실제 junction은 안 바뀌었는데 성공했다고 보고하는 조용한 실패
-  가능성. VERIFY 6/6 경합 시나리오에서는 재현되지 않았지만 (실제로는 안
-  겹쳐서 mklink 자체가 실패할 기회가 없었음), 코드상 gap은 남아있음. MVP
-  스코프 밖 신규 기능이 아니라 기존 rollback 기능의 방어 로직 누락이라
-  고쳐도 되는 종류지만, 아직 사용자 확인 전이라 수정하지 않고 기록만 남김.
+- **`rollback.ps1`이 `mklink` 종료 코드를 확인하지 않음 — 코드리뷰로 의심 →
+  실측으로 재현 확인 (2026-07-12).** `deploy.ps1`은 junction 스위칭 후
+  `$LASTEXITCODE`를 체크해 실패 시 throw하는데 `rollback.ps1`은 같은 자리에
+  체크가 없어서, mklink가 경합 등으로 실패해도 `[rollback] DONE`을 그대로
+  찍고 이력에도 ROLLBACK을 정상 기록할 수 있었다 (실제 junction은 안
+  바뀌었는데 성공했다고 보고하는 조용한 실패). `VERIFY 7/7` 결정론적
+  스트레스 테스트(4개 병렬 rollback, 3초, 16회 호출)에서 **실제로 5회
+  재현됨** — 수정 후에는 이 5회 전부 `ROLLBACK_FAIL`로 정확히 기록됨.
+  exit code 체크 + 실패 시 `ROLLBACK_FAIL` 기록(`deploy.ps1`의 `DEPLOY_FAIL`과
+  동일 원칙)으로 수정.
 
 ## 프로토타입 처리
 `sim/`은 검증 완료 후에도 **데모/README용으로 유지** (심사위원이 Windows 없이
